@@ -1,0 +1,1089 @@
+---
+title: "Deep Learning with R"
+author: "Pâquarse Delvich Van Mahouvi"
+date: "2022-11-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr ::opts_chunk$set(comment=NA)
+```
+
+
+# DEEP LEARNING WITH R
+
+## Reseaux de neurones
+
+### reseaux de neurones (retropropagation programmee "? la main")
+
+learn_rate : taux d'apprentissage
+
+```{r}
+sigmoid <- function(x) {1 / (1 + exp(-x))}
+
+feedforward <- function(x, w1, w2) {
+z1 <- cbind(1, x) %*% w1
+h <- sigmoid(z1)
+z2 <- cbind(1, h) %*% w2
+list(output = sigmoid(z2), h = h)
+}
+```
+
+
+--> Correspond à la descente du gradien, (retropropagation du gradient)
+
+```{r}
+backpropagate <- function(x, y, y_hat, w1, w2, h, learn_rate) {
+  dw2 <- t(cbind(1,h)) %*% (y_hat-y) %*% y %*% (1-y)
+  dw1 <- t(cbind(1,x)) %*% (h * (1-h) * (y_hat-y) %*% t(w2[-1,]))
+  w1 <- w1 - learn_rate * dw1
+  w2 <- w2 - learn_rate * dw2
+  list(w1 = w1, w2 = w2)
+}
+```
+
+
+d : nombre de parametre en entree
+
+```{r}
+perceptron <- function(x, y, size = 5, learn_rate = 1e-2, iterations = 1e4) {
+  d <- ncol(x) + 1
+  set.seed(235)
+  w1 <- matrix(rnorm(d * size), d, size)
+  w2 <- as.matrix(rnorm(size + 1))
+  #Apprentissage du modele (a partir d'ici)
+  for (i in 1:iterations) {
+    ff <- feedforward(x, w1, w2)
+    bp <- backpropagate(x, y, y_hat = ff$output, w1, w2, h = ff$h, learn_rate = learn_rate)
+    w1 <- bp$w1; w2 <- bp$w2
+  }
+  list(output = ff$output, w1 = w1, w2 = w2)
+}
+```
+
+# perceptron sur jeu de donnees spam
+
+```{r}
+library(kernlab)
+data(spam)
+summary(spam)
+str(spam)
+```
+
+
+# tirage aleatoire simple sans remise
+
+On a juste melangé les données, on a pas fait d'échantillon test/train
+
+```{r}
+set.seed(123)
+#s <- sample(nrow(spam), nrow(spam)/2, replace=F)
+s <- sample(nrow(spam))
+```
+
+
+```{r}
+x <- data.matrix(spam[s,-58])
+x <- scale(data.matrix(spam[,-58]))
+y <- (spam$type == "spam")[s]
+system.time(mynnet <- perceptron(x, y, size = 100, iterations = 1e3))
+
+```
+
+# AUC
+
+```{r}
+library(pROC)
+auc(y, as.numeric(mynnet$output), quiet=TRUE)
+summary(mynnet$output)
+(tab <- table(y, (mynnet$output > 0.5)))
+sum(diag(tab)/nrow(spam))
+cbind(prop.table(tab,1), addmargins(tab,2))
+```
+
+
+# -------------------------------------------------------------------------------------------------------
+# reseaux de neurones (package nnet)
+# -------------------------------------------------------------------------------------------------------
+
+# On charge le package nnet pour les reseaux de neurones (perceptron ? une couche cache)
+
+```{r}
+library(nnet)
+```
+
+# tirage aleatoire simple sans remise
+
+```{r}
+set.seed(123)
+s <- sample(nrow(spam), nrow(spam)/2, replace=F)
+```
+
+# Echantillons d'apprentissage et de validation
+
+```{r}
+train  <- spam[s,]
+valid  <- spam[-s,]
+summary(train)
+```
+
+
+# reseau avec sortie sigmoide
+ l'option MaxNWts permet d'augmenter le nombre d'unit?s cach?es
+
+```{r}
+seed <- 235
+set.seed(seed)
+rn <- nnet(type ~ ., data=train, size=100, decay=0, maxit=1e3, softmax=F, MaxNWts = 1e4)
+summary(rn)
+```
+
+
+softmax = T : affiche les deux probabilité, P(Y = 0) et P(Y=1) si binanire par exemple. Si False, elle affiche par exemple la prob de Y = 1 (par exemple) tout seul 
+
+Signification de : 57-100-1
+--> 57 couches (variables) en entrée
+--> 100 couches cachées
+--> 1 couche de sortie
+
+On peut donc faire un predic classique
+
+```{r}
+pred.rn <- predict(rn, newdata = valid, type = "raw")
+```
+
+type = "raw" pour avoir les probabilité et non la callse, ça permet de changer le seuil soi-même en fonction de ce qu'on veut
+
+## Statistique sur la prévision 
+
+```{r}
+auc(valid$type, as.numeric(pred.rn), quiet=TRUE)
+(tab <- table(valid$type, (pred.rn > 0.65)))
+```
+
+# representation du reseau
+
+```{r}
+library(NeuralNetTools)
+plotnet(rn, cex_val=0.7)
+```
+
+# importance des variables (avec sortie binaire donc softmax = F), c'est la variable importance
+
+```{r}
+garson(rn) # sous forme d'histogramme
+g <- garson(rn, bar_plot = FALSE) # sous forme num?rique
+cbind(row.names(g)[order(g$rel_imp,decreasing=T)],g[order(g$rel_imp,decreasing=T),])
+```
+
+
+# application du r?seau
+pred.rn <- predict(rn, newdata = valid, type = "raw")
+head(pred.rn, 10)
+auc(valid$type, as.numeric(pred.rn), quiet=TRUE)
+(tab <- table(valid$type, (pred.rn > 0.65)))
+sum(diag(tab)/nrow(spam))
+cbind(prop.table(tab,1), addmargins(tab,2))
+
+
+
+# =========================================================================================================
+# Deep Learning
+# =========================================================================================================
+
+
+# ---------------------------------------------------------------
+# package keras : 1?re installation
+# ---------------------------------------------------------------
+
+# https://cran.r-project.org/web/packages/keras/vignettes/getting_started.html
+
+library(keras)
+install_keras() # installe aussi tensorflow dont keras est une interface
+#install_keras(tensorflow="gpu") # installation avec GPU
+# pr?alablement : installer Anaconda pour Python 3.x (https://www.continuum.io/downloads#windows)
+
+# on peut v?rifier les versions de Python
+tensorflow::tf_config()
+reticulate::py_config()
+is_keras_available()
+# on peut sp?cifier l'emplacement de l'installation Python ? utiliser
+#Sys.setenv(RETICULATE_PYTHON = "D:/anaconda3")
+
+# ----------------------------
+# MNIST avec perceptron et CNN
+# ----------------------------
+
+# chargement du package
+library(keras)
+
+# chargement du jeu de donn?es
+mnist   <- dataset_mnist()
+x_train <- mnist$train$x
+y_train <- mnist$train$y
+x_test  <- mnist$test$x
+y_test  <- mnist$test$y
+dim(x_train) # [1] 60000    28    28
+dim(y_train) # [1] 60000
+
+# affichage des 100 premi?res images
+old <- par(no.readonly = TRUE)
+par(mfrow = c(10,10), mai = c(0,0,0,0))
+for(i in 1:100) {
+  plot(as.raster(x_train[i,,], max = 255))
+  #text(3, 0, mnist$train$y[i], cex = 2, col = gray(0.75), font=3, pos = c(3,4))
+}
+par(old)
+
+# dimensions des images en entr?e
+img_rows <- 28
+img_cols <- 28
+num_classes <- 10
+
+# attention : ne lancer que l'une des deux paires de lignes : la premi?re avant un perceptron (MLP), la 2e avant un r?seau convolutif (CNN)
+# ? lancer pour un perceptron classique : converting a 2D array (ici 28x28) into a 1D array (ici 784)
+x_train <- array(x_train, dim = c(nrow(x_train), img_rows*img_cols))
+x_test  <- array(x_test, dim = c(nrow(x_test), img_rows*img_cols))
+# ? lancer pour un r?seau convolutif : converting a 2D array (ici 28x28) into a 4D array
+x_train <- array(x_train, c(nrow(x_train), img_rows, img_cols, 1))
+x_test  <- array(x_test, c(nrow(x_test), img_rows, img_cols, 1))
+input_shape <- c(img_rows, img_cols, 1)
+
+# les valeurs RGB sont normalis?es dans [0,1]
+x_train <- x_train / 255
+x_test <- x_test / 255
+
+# conversion des num?ros de classes en matrices binaires (une colonne par classe)
+y_train <- to_categorical(y_train, num_classes)
+y_test  <- to_categorical(y_test, num_classes)
+
+# perceptron avec une couche en entr?e [784 unit?s], 1 couche cach?e [100 unit?s] avec un dropout de 0.5, et une couche de sortie [10 unit?s]
+model <- keras_model_sequential() # mod?le s?quentiel keras
+model %>%
+layer_dense(units = 100, input_shape = 784) %>%
+layer_dropout(rate=0.5)%>%
+layer_activation(activation = 'relu') %>%
+layer_dense(units = 10) %>%
+layer_activation(activation = 'softmax')
+
+# autre mod?le (perceptron ? deux couches cach?es)
+model <- keras_model_sequential() # mod?le s?quentiel keras
+model %>% 
+  layer_dense(units = 256, activation = 'relu', input_shape = c(784)) %>% 
+  layer_dropout(rate = 0.4) %>% 
+  layer_dense(units = 128, activation = 'relu') %>%
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 10, activation = 'softmax')
+
+# autre mod?le (perceptron ? trois couches cach?es)
+model <- keras_model_sequential() # mod?le s?quentiel keras
+model %>% 
+  layer_dense(units = 256, activation = 'relu', input_shape = c(784)) %>% 
+  layer_dropout(rate = 0.4) %>% 
+  layer_dense(units = 128, activation = 'relu') %>%
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 64, activation = 'relu') %>%
+  layer_dropout(rate = 0.2) %>%
+  layer_dense(units = 10, activation = 'softmax')
+
+# autre mod?le (CNN : r?seau ? 2 couches convolutives)
+model <- keras_model_sequential() # mod?le s?quentiel keras
+model %>% 
+  layer_conv_2d(filter = 20, kernel_size = c(5,5), input_shape = input_shape) %>%
+  layer_activation("tanh") %>%
+  layer_max_pooling_2d(pool_size = c(3,3), strides = c(2,2)) %>% 
+  
+  layer_conv_2d(filter = 60, kernel_size = c(5,5)) %>%
+  layer_activation("tanh") %>%
+  layer_max_pooling_2d(pool_size = c(3,3), strides = c(2,2)) %>%
+   
+  layer_flatten() %>%
+  layer_dropout(0.5, seed=235) %>%
+  layer_dense(300) %>%
+  layer_activation("tanh") %>%
+  layer_dense(num_classes) %>%
+  layer_activation("softmax")
+
+# autre mod?le (CNN : r?seau ? 2 couches convolutives avec activation ReLU)
+model <- keras_model_sequential() # mod?le s?quentiel keras
+model %>% 
+  layer_conv_2d(filter = 20, kernel_size = c(5,5), padding = "same", input_shape = input_shape) %>%
+  layer_activation("relu") %>%
+  layer_max_pooling_2d(pool_size = c(3,3), strides = c(2,2)) %>% 
+  
+  layer_conv_2d(filter = 60, kernel_size = c(5,5)) %>%
+  layer_activation("relu") %>%
+  layer_max_pooling_2d(pool_size = c(3,3), strides = c(2,2)) %>%
+   
+  layer_flatten() %>%
+  layer_dropout(0.5, seed=235) %>%
+  layer_dense(300) %>%
+  layer_activation("relu") %>%
+  layer_dense(num_classes) %>%
+  layer_activation("softmax")
+
+# autre mod?le (CNN : r?seau ? 2 couches convolutives et normalisation batch)
+model <- keras_model_sequential() # mod?le s?quentiel keras
+model %>% 
+  layer_conv_2d(filter = 20, kernel_size = c(5,5), input_shape = input_shape) %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  layer_max_pooling_2d(pool_size = c(3,3), strides = c(2,2)) %>% 
+  
+  layer_conv_2d(filter = 60, kernel_size = c(5,5)) %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  layer_max_pooling_2d(pool_size = c(3,3), strides = c(2,2)) %>%
+   
+  layer_flatten() %>%
+  #layer_dropout(0.5, seed=235) %>%
+  layer_dense(300) %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  layer_dense(num_classes) %>%
+  layer_activation("softmax")
+
+summary(model)
+
+# compilation du mod?le
+model %>% compile(loss = 'categorical_crossentropy', optimizer = 'sgd', metrics = c('accuracy'))
+model %>% compile(loss = 'categorical_crossentropy', optimizer = 'adagrad', metrics = c('accuracy'))
+model %>% compile(loss = 'categorical_crossentropy', optimizer = 'adadelta', metrics = c('accuracy'))
+model %>% compile(loss = 'categorical_crossentropy', optimizer = 'rmsprop', metrics = c('accuracy'))
+model %>% compile(loss = 'categorical_crossentropy', optimizer = 'adam', metrics = c('accuracy'))
+model %>% compile(loss = 'categorical_crossentropy', optimizer = optimizer_adadelta(decay = 1e-5), metrics = 'accuracy')
+model %>% compile(loss = 'categorical_crossentropy', optimizer = optimizer_rmsprop(learning_rate = 0.0001, decay = 1e-6), metrics = 'accuracy')
+# autre fonction de perte (r?gression) : mse
+
+# apprentissage du mod?le sur l'?chantillon d'apprentissage
+system.time(history <- fit(model, x_train, y_train, epochs = 30, batch_size = 128, shuffle = TRUE, validation_data = list(x_test, y_test), verbose=1))
+#system.time(history <- fit(model, x_train, y_train, epochs = 10, batch_size = 128, validation_split = 0.1, verbose=1))
+plot(history)
+
+# ?valuation du mod?le sur l'?chantillon de validation
+model %>% evaluate(x_test, y_test, verbose = 0)
+
+# pr?dictions
+# classes pr?dites avant tensorflow version 2.6
+#pred <- predict_classes(model, x_test)
+# classes pr?dites ? partir de tensorflow version 2.6
+pred <- model %>% predict(x_test) %>% k_argmax() %>% as.integer()
+test.label <- max.col(y_test) - 1 
+table(test.label, pred)
+mean(test.label != pred)
+
+# affichage des 64 premi?res erreurs de classement
+erreurs <- head(which(test.label != pred), 64)
+old <- par(no.readonly = TRUE)
+par(mfrow = c(8,8), mai = c(0,0,0,0))
+for(i in erreurs) {
+  plot(as.raster(x_test[i,,,]))
+  text(3, 0, test.label[i], cex = 2, col = gray(0.75), font=3, pos = c(3,4))
+  text(3, 20, pred[i], cex = 2, col = gray(0.25), pos = c(3,4))
+}
+par(old)
+
+# enregistrement du mod?le
+save_model_hdf5(model, "full_model_mnist.h5") # mod?le entier enregistr? comme fichier binaire
+save_model_weights_hdf5(model, "weights_model.h5") # ensemble des poids du mod?le enregistr? comme fichier binaire
+
+# lecture du mod?le
+rm(model)
+model <- load_model_hdf5("full_model_mnist.h5")
+load_model_weights_hdf5(model, "weights_model.h5")
+
+# application d'un mod?le ? une image trac?e avec Paint et enregistr?e en jpeg
+# chargement de l'image avec canal gris
+img_path <- "chiffre2.jpg"
+img <- image_load(paste("D:/Data/chiffres/",img_path, sep=""), target_size = c(28,28), grayscale = TRUE)
+#img <- image_load(paste("../input/chiffres/",img_path, sep=""), target_size = c(28,28), grayscale = TRUE)
+x <- image_to_array(img)  # conversion de l'image en tenseur 3D
+x <- array_reshape(1-(x/255), c(1, dim(x)))
+preds <- model %>% predict(x) 
+which(preds==max(preds))-1
+# code sous forme de fonction pour tester un ensemble de chiffres
+reconnaissance <- function(x){
+img <- image_load(paste("D:/Data Mining/Universit? Rennes 1/Cours/Cours Big Data/Donn?es pour TP Big Data/",x, sep=""), target_size = c(28,28), grayscale = TRUE)
+#img <- image_load(paste("../input/chiffres/",x, sep=""), target_size = c(28,28), grayscale = TRUE)
+x <- image_to_array(img)  # conversion de l'image en tenseur 3D
+x <- array_reshape(1-(x/255), c(1, dim(x)))
+#x <- array_reshape(x, c(1, dim(x)))
+preds <- model %>% predict(x) 
+which(preds==max(preds))-1
+}
+reconnaissance("chiffre1.jpg")
+sapply(0:9, function(x) {reconnaissance(paste("chiffre",x,".jpg", sep=""))})
+
+
+# ------------------------------------
+# chargement d'un mod?le pr?entra?n?
+# ------------------------------------
+
+# VGG16
+model_vgg <- application_vgg16(weights = "imagenet", include_top = TRUE)
+summary(model_vgg)
+img_path <- "D:/Data/Images/berger_allemand.jpg"
+img <- image_load(img_path, target_size = c(224,224)) # chargement de l'image
+x <- image_to_array(img) # conversion de l'image en tenseur 3D
+x <- array_reshape(x, c(1, dim(x))) # tenseur 4D avec ajout 1?re composante = 1 car une seule image
+# m?me pr?processing que pour le concours ImageNet : soustraction de la moyenne RGB pour chaque pixel
+x <- imagenet_preprocess_input(x)
+preds <- model_vgg %>% predict(x) # calcul de probabilit?s pour chacune des 1000 classes
+imagenet_decode_predictions(preds, top = 3)[[1]]
+
+# ResNet50
+model <- application_resnet50(weights = 'imagenet')
+img_path <- "D:/Data/Images/chat.jpg"
+img <- image_load(img_path, target_size = c(224,224))
+x <- image_to_array(img)
+x <- array_reshape(x, c(1, dim(x)))
+x <- imagenet_preprocess_input(x)
+preds <- model %>% predict(x)
+imagenet_decode_predictions(preds, top = 3)[[1]]
+
+
+# ------------------------------------
+# explication des pr?dictions avec LIME
+# ------------------------------------
+
+# https://www.data-imaginist.com/2018/lime-v0-4-the-kitten-picture-edition/
+
+library(keras)
+library(lime)
+#install.packages('magick')
+#library(magick)
+
+model <- application_vgg16(weights = "imagenet",  include_top = TRUE)
+model
+
+# image sur internet pour le test
+img <- image_read('https://www.data-imaginist.com/assets/images/kitten.jpg')
+img_path <- file.path(tempdir(), 'kitten.jpg')
+image_write(img, img_path)
+plot(as.raster(img))
+
+# image locale pour le test
+img_path <- "D:/Data/Images/berger_allemand.jpg"
+
+# the explainer will need to know how to prepare the input data for the model
+# for keras models this means formatting the image data as tensors
+image_prep <- function(x) {
+  arrays <- lapply(x, function(path) {
+    img <- image_load(path, target_size = c(224,224))
+    x <- image_to_array(img)
+    x <- array_reshape(x, c(1, dim(x)))
+    x <- imagenet_preprocess_input(x)
+  })
+  do.call(abind::abind, c(arrays, list(along = 1)))
+}
+explainer <- lime(img_path, model, image_prep)
+
+# code plus synth?tique
+preprocess_image <- function(x) {
+  arrays <- lapply(x, function(path) {
+   img <- image_load(path, target_size = c(224,224)) %>% image_to_array() %>% array_reshape(c(1, dim(.)))
+   imagenet_preprocess_input(img)
+  })
+  do.call(abind::abind, c(arrays, list(along = 1)))
+}
+explainer <- lime(img_path, model, preprocess_image)
+
+# pr?diction du mod?le
+res <- predict(model, preprocess_image(img_path))
+imagenet_decode_predictions(res)
+
+# affichage des super-pixels
+plot_superpixels(img_path)
+# changing some settings
+plot_superpixels(img_path, n_superpixels = 200, weight = 40)
+
+# explication
+set.seed(235)
+system.time(explanation <- explain(img_path, explainer, n_labels = 1, n_features = 10, n_permutations = 500, n_superpixels = 50))
+explanation <- as.data.frame(explanation)
+explanation[1:5,c(2:5,7:8,10:11)]
+
+# affichage de l'image avec explication
+plot_image_explanation(explanation)
+plot_image_explanation(explanation, display = 'block', threshold = 0.01)
+plot_image_explanation(explanation, threshold = 0, show_negative = TRUE, fill_alpha = 0.6)
+
+# ------------------------------------
+# CIFAR
+# ------------------------------------
+
+# The CIFAR-10 dataset consists of 60000 32x32 colour images in 10 classes, with 6000 images per class
+# There are 50000 training images and 10000 test images
+
+# chargement du package
+library(keras)
+
+# chargement du jeu de donn?es
+cifar10 <- dataset_cifar10()
+x_train <- cifar10$train$x/255
+x_test <- cifar10$test$x/255
+y_train <- to_categorical(cifar10$train$y, num_classes = 10)
+y_test <- to_categorical(cifar10$test$y, num_classes = 10)
+
+# affichage des 100 premi?res images
+old <- par(no.readonly = TRUE)
+par(mfrow = c(10,10), mai = c(0,0,0,0))
+for(i in 1:100) {
+  plot(as.raster(x_train[i,,,]))
+  text(3, 0, cifar10$train$y[i], cex = 2, col = gray(0.75), font=3, pos = c(3,4))
+}
+par(old)
+
+# mod?le s?quentiel keras ? 4 couches de convolution
+model <- keras_model_sequential() %>%
+  # premi?re couche de convolution, aliment?e par des images de 32x32 pixels
+  layer_conv_2d(filter = 32, kernel_size = c(3,3), padding = "same", input_shape = c(32, 32, 3)) %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  # deuxi?me couche de convolution
+  layer_conv_2d(filter = 32, kernel_size = c(3,3)) %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  layer_max_pooling_2d(pool_size = c(2,2)) %>%
+  layer_dropout(0.2) %>%
+  # 3e couche de convolution
+  layer_conv_2d(filter = 32, kernel_size = c(3,3), padding = "same") %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  # 4e couche de convolution
+  layer_conv_2d(filter = 32, kernel_size = c(3,3)) %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  layer_max_pooling_2d(pool_size = c(2,2)) %>%
+  layer_dropout(0.2) %>%
+  # premi?re couche compl?tement connect?e
+  layer_flatten() %>%
+  layer_dropout(0.5) %>%
+  layer_dense(512) %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  # couche de sortie
+  layer_dense(10) %>%
+  layer_activation("softmax")
+
+# mod?le s?quentiel keras ? 6 couches de convolution
+model <- keras_model_sequential() %>%
+  # premi?re couche de convolution
+  layer_conv_2d(filter = 64, kernel_size = c(3,3), padding = "same", input_shape = c(32, 32, 3)) %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  # deuxi?me couche de convolution
+  layer_conv_2d(filter = 64, kernel_size = c(3,3)) %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  layer_max_pooling_2d(pool_size = c(2,2)) %>%
+  layer_dropout(0.2) %>%
+  # 3e couche de convolution
+  layer_conv_2d(filter = 128, kernel_size = c(3,3), padding = "same") %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  # 4e couche de convolution
+  layer_conv_2d(filter = 128, kernel_size = c(3,3)) %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  layer_max_pooling_2d(pool_size = c(2,2)) %>%
+  layer_dropout(0.2) %>%
+  # 5e couche de convolution
+  layer_conv_2d(filter = 256, kernel_size = c(3,3), padding = "same") %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  # 6e couche de convolution
+  layer_conv_2d(filter = 256, kernel_size = c(3,3)) %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+  layer_max_pooling_2d(pool_size = c(2,2)) %>%
+  layer_dropout(0.2) %>%
+# premi?re couche compl?tement connect?e
+  layer_flatten() %>%
+  layer_dropout(0.5) %>%
+  layer_dense(units = 512) %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+# deuxi?me couche compl?tement connect?e
+  layer_dropout(0.5) %>%
+  layer_dense(units = 512) %>%
+  layer_batch_normalization() %>%
+  layer_activation("relu") %>%
+# couche de sortie
+  layer_dense(10) %>%
+# sortie 
+ layer_activation("softmax")
+ 
+summary(model)
+
+# compilation du mod?le
+model %>% compile(loss = 'categorical_crossentropy', optimizer = optimizer_rmsprop(learning_rate = 0.001), metrics = 'accuracy')
+model %>% compile(loss = 'categorical_crossentropy', optimizer = optimizer_rmsprop(learning_rate = 0.001, decay = 0.001), metrics = 'accuracy')
+model %>% compile(loss = 'categorical_crossentropy', optimizer = optimizer_adadelta(decay = 1e-3), metrics = 'accuracy')
+model %>% compile(loss = 'categorical_crossentropy', optimizer = 'sgd', metrics = 'accuracy')
+
+# apprentissage du mod?le sur l'?chantillon d'apprentissage (sans data augmentation)
+system.time(history <- fit(model, x_train, y_train, epochs = 20, batch_size = 128, shuffle = TRUE, validation_data = list(x_test, y_test), verbose=1))
+plot(history)
+
+# ?valuation du mod?le sur l'?chantillon de validation
+model %>% evaluate(x_test, y_test, verbose = 0)
+
+# pr?dictions
+# classes pr?dites avant tensorflow version 2.6
+pred <- predict_classes(model, x_test)
+# classes pr?dites ? partir de tensorflow version 2.6
+pred <- model %>% predict(x_test) %>% k_argmax() %>% as.integer()
+test.label <- max.col(y_test) - 1 
+table(test.label, pred)
+mean(test.label != pred)
+
+# affichage des 100 premi?res erreurs de classement
+err100 <- head(which(test.label != pred), 100)
+old <- par(no.readonly = TRUE)
+par(mfrow = c(10,10), mai = c(0,0,0,0))
+for(i in err100) {
+  plot(as.raster(x_test[i,,,]))
+  text(3, 0, test.label[i], cex = 2, col = gray(0.75), font=3, pos = c(3,4))
+  text(3, 20, pred[i], cex = 2, col = gray(0.25), pos = c(3,4))
+}
+par(old)
+
+# augmentation de donn?es
+datagen <- image_data_generator(
+   rotation_range = 15,
+   width_shift_range = 0.15,
+   height_shift_range = 0.15,
+   shear_range = 0.15,
+   zoom_range = 0.15,
+   horizontal_flip = FALSE
+ )
+
+# apprentissage du mod?le sur l'?chantillon d'apprentissage (avec data augmentation)
+system.time(history <- model %>% fit_generator(
+   flow_images_from_data(x_train, y_train, generator = datagen, batch_size = 128),
+   steps_per_epoch = as.integer(nrow(x_train)/128),
+   epochs = 50, validation_data = list(x_test, y_test)
+   , callbacks = callback_early_stopping(monitor = 'val_loss', patience = 3)
+ ))
+
+# ?valuation du mod?le sur l'?chantillon de validation
+model %>% evaluate(x_test, y_test, verbose = 0)
+
+# chargement d'un mod?le pr?entra?n?
+input_shape <- c(32, 32, 3)
+base_model <- application_vgg16(include_top = FALSE, weights = "imagenet", input_shape = input_shape)
+base_model <- application_inception_v3(include_top = FALSE, weights = 'imagenet', input_shape = input_shape)
+base_model <- application_inception_resnet_v2(include_top = FALSE, weights = 'imagenet', input_shape = input_shape)
+base_model <- application_xception(include_top = FALSE, weights = 'imagenet', input_shape = input_shape)
+base_model <- application_mobilenet(include_top = FALSE, weights = 'imagenet', input_shape = input_shape)
+base_model <- application_resnet50(include_top = FALSE, weights = 'imagenet', input_shape = input_shape)
+base_model
+# ajout d'un classificateur compl?tement connect? au sommet de la base convolutive
+model <- keras_model_sequential() %>%
+base_model %>%
+layer_flatten() %>%
+layer_dense(units = 128, activation = "relu") %>%
+layer_dropout(rate = 0.5) %>%
+layer_dense(units = 10, activation = "softmax")
+model
+freeze_weights(base_model)
+#unfreeze_weights(base_model, from = "block5_conv1")
+model
+
+# compilation et entra?nement du mod?le
+model %>% compile(loss = 'categorical_crossentropy', optimizer = optimizer_rmsprop(learning_rate = 0.001), metrics = 'accuracy')
+
+# apprentissage du mod?le sur l'?chantillon d'apprentissage (sans data augmentation)
+system.time(history <- fit(model, x_train, y_train, epochs = 3, batch_size = 128, shuffle = TRUE, validation_data = list(x_test, y_test), verbose=1))
+plot(history)
+
+# =========================================================================================================
+# Chats et chiens
+# =========================================================================================================
+
+library(keras)
+
+
+# -------------------------------------------------------------------- #
+# Lecture des donn?es
+# -------------------------------------------------------------------- #
+
+# T?l?charger les donn?es sur FileSender : 
+base_dir <- "D:/Data/DogsCats/miniDogsCats"
+https://filesender.renater.fr/?s=download&token=bc0620b8-1b38-465c-97ec-1e1316e9b2e7
+
+
+# -------------------------------------------------------------------- #
+# Mod?le simple
+# -------------------------------------------------------------------- #
+
+img_rows = 128
+img_cols = 128
+input_shape <- c(img_rows, img_cols, 3)
+
+# ?chantillons d'apprentissage et de validation
+train_dir <- file.path(base_dir, "train")
+test_dir  <- file.path(base_dir, "test")
+train_datagen <- image_data_generator(rescale = 1/255)
+test_datagen  <- image_data_generator(rescale = 1/255)
+train_generator <- flow_images_from_directory(train_dir, train_datagen, target_size = c(img_rows,img_cols), shuffle = TRUE, batch_size = 64, class_mode = "binary")
+test_generator  <- flow_images_from_directory(test_dir, test_datagen, target_size = c(img_rows,img_cols), shuffle = FALSE, batch_size = 64, class_mode = "binary")
+
+model <- keras_model_sequential() %>%
+  layer_conv_2d(filters = 32, kernel_size = c(3,3), activation = 'relu', input_shape = input_shape) %>% 
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>% 
+  layer_conv_2d(filters = 64, kernel_size = c(3,3), activation = 'relu') %>% 
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>% 
+  #layer_dropout(rate = 0.25) %>% 
+  layer_conv_2d(filters = 128, kernel_size = c(3,3), activation = 'relu') %>% 
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>% 
+  layer_flatten() %>% 
+  layer_dense(units = 128, activation = 'relu') %>% 
+  layer_dropout(rate = 0.5) %>% 
+  layer_dense(units = 1, activation = 'sigmoid')
+
+summary(model)
+
+# compilation du mod?le
+model %>% compile(
+  loss = 'binary_crossentropy',
+  #optimizer = optimizer_adadelta(),
+  #optimizer = optimizer_rmsprop(lr=0.001),
+  optimizer = optimizer_adam(lr=0.001, beta_1=0.9, beta_2=0.9, decay=0.1),
+  metrics = c('accuracy')
+)
+
+# anciennes versions de Keras
+system.time(history <- model %>% fit_generator(train_generator, steps_per_epoch = 79, epochs = 20, validation_data = test_generator, validation_steps = 30))
+# nouvelles versions de Keras
+system.time(history <- model %>% fit(train_generator, epochs = 20, validation_data = test_generator))
+plot(history) 
+
+# ?valuation du mod?le sur l'?chantillon de validation
+model %>% evaluate_generator(test_generator, steps = 30)
+
+# pr?dictions
+pred <- predict_generator(model, test_generator, steps = 30) # probas pr?dites
+table(head(test_generator$classes,length(pred)), (pred>0.5))
+
+
+# -------------------------------------------------------------------- #
+# Mod?le avec augmentation de donn?es
+# -------------------------------------------------------------------- #
+
+datagen <- image_data_generator(
+  rescale = 1/255,
+  rotation_range = 15,
+  width_shift_range = 0.15,
+  height_shift_range = 0.15,
+  shear_range = 0.15,
+  zoom_range = 0.15,
+  horizontal_flip = FALSE
+)
+
+# apprentissage du mod?le sur l'?chantillon d'apprentissage (avec data augmentation)
+train_generator <- flow_images_from_directory(train_dir, datagen, target_size = c(img_rows,img_cols), shuffle = TRUE, batch_size = 64, class_mode = "binary")
+#system.time(history <- model %>% fit_generator(train_generator, steps_per_epoch = 79, epochs = 20, validation_data = test_generator, validation_steps = 30))
+system.time(history <- model %>% fit(train_generator, epochs = 20, validation_data = test_generator))
+plot(history)
+
+
+# -------------------------------------------------------------------- #
+# Mod?le avec mod?le pr?entra?n?
+# -------------------------------------------------------------------- #
+
+# https://tensorflow.rstudio.com/keras/articles/applications.html
+
+# chargement d'un mod?le pr?entra?n?
+base_model <- application_vgg16(include_top = FALSE, weights = "imagenet", input_shape = input_shape)
+base_model <- application_inception_v3(include_top = FALSE, weights = 'imagenet', input_shape = input_shape)
+base_model <- application_inception_resnet_v2(include_top = FALSE, weights = 'imagenet', input_shape = input_shape)
+base_model <- application_xception(include_top = FALSE, weights = 'imagenet', input_shape = input_shape)
+base_model <- application_mobilenet(include_top = FALSE, weights = 'imagenet', input_shape = input_shape)
+base_model <- application_resnet50(include_top = FALSE, weights = 'imagenet', input_shape = input_shape)
+base_model
+# ajout d'un classificateur compl?tement connect? au sommet de la base convolutive
+model <- keras_model_sequential() %>%
+base_model %>%
+layer_flatten() %>%
+layer_dense(units = 128, activation = "relu") %>%
+layer_dropout(rate = 0.5) %>%
+layer_dense(units = 1, activation = "sigmoid")
+model
+freeze_weights(base_model)
+#unfreeze_weights(base_model, from = "block5_conv1")
+model
+
+# compilation et entra?nement du mod?le
+model %>% compile(loss = 'binary_crossentropy', optimizer = optimizer_rmsprop(lr = 0.001, decay = 0.001), metrics = 'accuracy')
+model %>% compile(loss = 'binary_crossentropy', optimizer = optimizer_adadelta(decay = 1e-2), metrics = 'accuracy')
+
+system.time(history <- model %>% fit_generator(train_generator, steps_per_epoch = 79, epochs = 30, validation_data = test_generator, validation_steps = 30,
+                                               callbacks = callback_early_stopping(monitor = 'acc', patience = 5)))
+plot(history)
+
+
+# -------------------------------------------------------------------- #
+# Mod?le de boosting sur features d'un mod?le pr?entra?n?
+# -------------------------------------------------------------------- #
+
+# extraction de caract?ristiques pour application d'un classificateur non-neuronal
+base_model <- application_vgg16(weights = "imagenet", include_top = FALSE, input_shape = c(128, 128, 3))
+base_model <- application_mobilenet(weights = "imagenet", include_top = FALSE, input_shape = c(128, 128, 3))
+
+# taille des images
+img_rows = 128
+img_cols = 128
+input_shape <- c(img_rows, img_cols, 3)
+# r?pertoires
+base_dir <- "D:/Data/DogsCats/miniDogsCats"
+train_dir <- file.path(base_dir, "train")
+test_dir  <- file.path(base_dir, "test")
+# lot d'images normalis?es
+train_generator <- flow_images_from_directory(train_dir, image_data_generator(rescale = 1/255), target_size = c(img_rows,img_cols), shuffle = FALSE, batch_size = 100, class_mode = "binary")
+test_generator  <- flow_images_from_directory(test_dir, image_data_generator(rescale = 1/255), target_size = c(img_rows,img_cols), shuffle = FALSE, batch_size = 100, class_mode = "binary")
+# lot d'images non normalis?es
+train_generator <- flow_images_from_directory(train_dir, image_data_generator(), target_size = c(img_rows,img_cols), shuffle = FALSE, batch_size = 100, class_mode = "binary")
+test_generator  <- flow_images_from_directory(test_dir, image_data_generator(), target_size = c(img_rows,img_cols), shuffle = FALSE, batch_size = 100, class_mode = "binary")
+# ?chantillon d'apprentissage
+train <- keras_model_sequential() %>% base_model %>% layer_flatten() %>% predict_generator(train_generator, steps=50)
+dim(train)
+ytrain <- train_generator$classes[1:dim(train)[1]]
+table(ytrain)
+# ?chantillon de validation
+valid <- keras_model_sequential() %>% base_model %>% layer_flatten() %>% predict_generator(test_generator, steps=20)
+dim(valid)
+yvalid <- test_generator$classes[1:dim(valid)[1]]
+table(yvalid)
+
+# pr?diction avec lightgbm
+library(lightgbm)
+dtrain <- lgb.Dataset(data=train, label=ytrain)
+dvalid <- lgb.Dataset.create.valid(dtrain, valid, label=yvalid)
+lgb.grid = list(seed = 123, objective = "binary", metric = "auc", boosting = "gbdt", lambda_l2 = 0.0005, max_depth = 5, num_leaves = 32, eta = 0.3, num_threads = 4, feature_fraction = 0.5,
+n_iter = 1000, early_stopping_rounds = 10, num_threads = 4, verbosity=1)
+lgb.model <- lgb.train(params = lgb.grid, data = dtrain, valids = list(test = dvalid))
+# pr?dictions
+pred.lgb <- predict(lgb.model, valid)
+table(yvalid, (pred.lgb>0.5))
+# pr?cision
+sum(yvalid==(pred.lgb>0.5))/nrow(valid)
+
+
+
+# =========================================================================================================
+# Deep Learning avec Torch pour R
+# =========================================================================================================
+
+
+# https://torch.mlverse.org/
+# https://torch.mlverse.org/docs/index.html
+# https://torch.mlverse.org/docs/reference/index.html#section-backends
+# https://rdrr.io/github/mlverse/torchvision/src/vignettes/examples/mnist-cnn.R
+
+
+# Packages
+
+library(torch)
+library(torchvision)
+# GPU ?
+cuda_is_available()
+
+
+# Datasets et loaders
+
+dir <- "C:/temp/MNIST" #caching directory
+train_ds <- mnist_dataset(dir, download = TRUE, transform = transform_to_tensor)
+test_ds  <- mnist_dataset(dir, download = TRUE, train = FALSE, transform = transform_to_tensor)
+#train_ds <- kmnist_dataset(dir, download = TRUE, transform = transform_to_tensor)
+#test_ds  <- kmnist_dataset(dir, download = TRUE, train = FALSE, transform = transform_to_tensor)
+train_dl <- dataloader(train_ds, batch_size = 32, shuffle = TRUE)
+test_dl  <- dataloader(test_ds, batch_size = 32)
+
+
+# R?seau ? 2 couches de convolution
+
+net <- nn_module("Net",
+  initialize = function() {
+    self$conv1 <- nn_conv2d(1, 32, 3, 1)
+    self$conv2 <- nn_conv2d(32, 64, 3, 1)
+    self$dropout1 <- nn_dropout2d(0.25)
+    self$dropout2 <- nn_dropout2d(0.5)
+    self$fc1 <- nn_linear(9216, 128)
+    self$fc2 <- nn_linear(128, 10)
+  },
+  forward = function(x) {
+    x <- self$conv1(x)
+    x <- nnf_relu(x)
+    x <- self$conv2(x)
+    x <- nnf_relu(x)
+    x <- nnf_max_pool2d(x, 2)
+    x <- self$dropout1(x)
+    x <- torch_flatten(x, start_dim = 2)
+    x <- self$fc1(x)
+    x <- nnf_relu(x)
+    x <- self$dropout2(x)
+    output <- self$fc2(x)
+    output
+  }
+)
+
+model <- net()
+
+# R?seau ? 3 couches de convolution
+
+net <- nn_module("Net",
+  initialize = function() {
+    self$conv1 <- nn_conv2d(1, 32, 5, 1)
+    self$conv1_bn <- nn_batch_norm2d(32)
+    self$conv2 <- nn_conv2d(32, 32, 5, 1)
+    self$conv2_bn <- nn_batch_norm2d(32)
+    self$conv3 <- nn_conv2d(32, 64, 5, 1)
+    self$conv3_bn <- nn_batch_norm2d(64)
+    self$dropout1 <- nn_dropout2d(0.1)
+    self$dropout2 <- nn_dropout2d(0.1)
+    self$fc1 <- nn_linear(3*3*64, 256)
+    self$fc1_bn <- nn_batch_norm1d(256)
+    self$fc2 <- nn_linear(256, 10)
+  },
+  forward = function(x) {
+    x <- self$conv1(x)
+    x <- self$conv1_bn(x)
+    x <- nnf_relu(x)
+    x <- self$conv2(x)
+    x <- self$conv2_bn(x)
+    x <- nnf_relu(x)
+    x <- nnf_max_pool2d(x, 2)
+    x <- self$conv3(x)
+    x <- self$conv3_bn(x)
+    x <- nnf_relu(x)
+    x <- nnf_max_pool2d(x, 2)
+    x <- self$dropout1(x)
+    x <- torch_flatten(x, start_dim = 2)
+    x <- self$fc1(x)
+    x <- self$fc1_bn(x)
+    x <- nnf_relu(x)
+    x <- self$dropout2(x)
+    output <- self$fc2(x)
+    output
+  }
+)
+
+model <- net()
+
+# Choix CPU ou GPU
+
+device <- if(cuda_is_available()) "cuda" else "cpu"
+model$to(device = device)
+
+# Apprentissage du mod?le
+
+criterion <- nn_cross_entropy_loss()
+optimizer <- optim_sgd(model$parameters, lr = 0.01)
+#optimizer <- optim_rmsprop(model$parameters, lr = 0.001)
+#optimizer <- optim_adam(model$parameters, lr = 0.001)
+
+ptm <- proc.time()
+num_epochs <- 2
+for (epoch in 1:num_epochs) {
+
+  pb <- progress::progress_bar$new(
+    total = length(train_dl),
+    format = "[:bar] :eta Loss: :loss"
+  )
+
+  train_losses <- c()
+  test_losses <- c()
+  correct <- 0
+  total <- 0
+
+  coro::loop(for (b in train_dl) {
+    optimizer$zero_grad()
+    output <- model(b[[1]]$to(device = device))
+    #loss <- nnf_cross_entropy(output, b[[2]]$to(device = device))
+    loss <- criterion(output, b[[2]]$to(device = device))
+    loss$backward()
+    optimizer$step()
+    train_losses <- c(train_losses, loss$item())
+    pb$tick(tokens = list(loss = mean(train_losses)))
+  })
+
+  with_no_grad({
+    coro::loop(for (b in test_dl) {
+      model$eval()
+      output <- model(b[[1]]$to(device = device))
+      labels <- b[[2]]$to(device = device)
+      #loss <- nnf_cross_entropy(output, b[[2]]$to(device = device))
+      loss <- criterion(output, labels)
+      test_losses <- c(test_losses, loss$item())
+      predicted <- torch_max(output$data(), dim = 2)[[2]]
+      total <<- total + labels$size(1)
+      # add number of correct classifications in this batch to the aggregate
+      correct <<- correct + (predicted == labels)$sum()$item()
+      model$train()
+    })
+  })
+
+  cat(sprintf("Epoch %d - Loss : [Train: %3f] [Test: %3f] Accuracy : [Test: %3f]\n",
+              epoch, mean(train_losses), mean(test_losses), (correct/total)))
+
+}
+proc.time() - ptm
+
+# Sauvegarde du mod?le
+torch_save(model, "torch.mnist.3epochs")
+
+
+
+# =========================================================================================================
+# Auto-encodage
+# =========================================================================================================
+
+library(keras)
+
+# chargement du jeu de donn?es
+c(c(x_train, y_train), c(x_test, y_test)) %<-% dataset_mnist()
+
+# les valeurs sont normalis?es dans [0,1]
+x_train <- x_train / 255
+x_test <- x_test / 255
+
+# dimensions des images en entr?e
+img_rows <- 28
+img_cols <- 28
+num_classes <- 10
+
+# conversion d'un tenseur 3D (60000 x 28 x 28) en un tenseur 2D (60000 x 784)
+x_train <- array(x_train, dim = c(nrow(x_train), img_rows*img_cols))
+x_test  <- array(x_test, dim = c(nrow(x_test), img_rows*img_cols))
+
+model <- keras_model_sequential()
+model %>% 
+  layer_dense(units = 400, activation = 'tanh', input_shape = ncol(x_train)) %>% 
+  layer_dense(units = 200, activation = 'tanh') %>%
+  layer_dense(units = 100, activation = 'tanh') %>%
+  layer_dense(units = 2,   activation = 'tanh') %>%
+  layer_dense(units = 100, activation = 'tanh') %>%
+  layer_dense(units = 200, activation = 'tanh') %>%
+  layer_dense(units = 400, activation = 'tanh') %>%
+  layer_dense(units = ncol(x_train))
+model
+
+# apprentissage de l'autoencodeur sur l'?chantillon d'apprentissage
+model %>% compile(loss = "mean_squared_error", optimizer = optimizer_adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999))
+model %>% compile(loss = "mean_squared_error", optimizer = "adamax")
+system.time(history <- fit(model, x_train, x_train, epochs = 100, batch_size = 128, validation_data = list(x_test, x_test), verbose=1))
+plot(history)
+layer_name <- 'dense_20'
+intermediate_layer_model <- keras_model(inputs = model$input, outputs = get_layer(model, layer_name)$output)
+intermediate_output <- predict(intermediate_layer_model, x_train)
+head(intermediate_output)
+summary(intermediate_output)
+library(ggplot2)
+qplot(intermediate_output[,1], intermediate_output[,2], colour = as.factor(y_train))
+
+ACP <- princomp(x_train)
+qplot(ACP$scores[,1], ACP$scores[,2], colour=as.factor(y_train))
+
